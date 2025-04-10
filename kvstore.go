@@ -97,3 +97,10 @@ func (s *KVStore[K, V]) Delete(key K) (V, error) {
 	// Show old value.
 	return value, nil
 }
+
+// Print the current store.
+func (s *KVStore[K, V]) Print() {
+	for k, d := range s.data {
+		fmt.Printf("key: %v value: %v\n", k, d)
+	}
+}
