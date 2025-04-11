@@ -1,7 +1,9 @@
 package gokvstore
 
 import (
+	"encoding/gob"
 	"fmt"
+	"os"
 	"sync"
 )
 
@@ -38,10 +40,8 @@ func (s *KVStore[K, V]) hasKey(key K) bool {
 }
 
 // Insert key to store.
-// Implementing the Storer interface for the KVStore struct.
-// This is a write method. It needs a write mutex to prevent changes while inserting values.
 func (s *KVStore[K, V]) Put(key K, value V) error {
-	// Lock store for writing.
+	// This is a write method. It needs a write mutex to prevent changes while inserting values.
 	s.mu.Lock()
 	// Unlock store.
 	defer s.mu.Unlock()
@@ -51,12 +51,12 @@ func (s *KVStore[K, V]) Put(key K, value V) error {
 }
 
 // Retrieve value for specified key.
-// Implementing the Storer interface for the KVStore struct.
-// This is read method so it needs a read mutex to prevent chagnes while reading.
 func (s *KVStore[K, V]) Get(key K) (V, error) {
+	// This is read method so it needs a read mutex to prevent chagnes while reading.
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// Check if key is in store.
 	value, exists := s.data[key]
 	if !exists {
 		return value, fmt.Errorf("the key (%v) does not exist", key)
@@ -65,9 +65,8 @@ func (s *KVStore[K, V]) Get(key K) (V, error) {
 }
 
 // Update specified key with specified value.
-// Implementing the Storer interface for the KVStore struct.
-// This is a write method. It needs a write mutex to prevent changes while inserting values.
 func (s *KVStore[K, V]) Update(key K, value V) error {
+	// This is a write method. It needs a write mutex to prevent changes while inserting values.
 	// Lock store for writing.
 	s.mu.Lock()
 	// Unlock store.
@@ -83,9 +82,8 @@ func (s *KVStore[K, V]) Update(key K, value V) error {
 }
 
 // Delete specified key. This will remove key value pair from store.
-// Implementing the Storer interface for the KVStore struct.
-// This is a read method so it needs a read mutex to prevent changes while reading.
 func (s *KVStore[K, V]) Delete(key K) (V, error) {
+	// This is a read method so it needs a read mutex to prevent changes while reading.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -113,4 +111,56 @@ func (s *KVStore[K, V]) Print() {
 	for k, d := range s.data {
 		fmt.Printf("key: %v value: %v\n", k, d)
 	}
+}
+
+// Load store from file into current store.
+//
+// This will overwrite all keys with the ones from file.
+// If they were deleted before, they will be recreated.
+func (s *KVStore[K, V]) Load(file string) error {
+
+	// Apply lock to stop writing while importin.
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Open file.
+	loadFrom, err := os.Open(file)
+
+	if err != nil {
+		return fmt.Errorf("empty key/value store!, Error: %v", err)
+	}
+	defer loadFrom.Close()
+
+	// Create new decoder and decode.
+	decoder := gob.NewDecoder(loadFrom)
+	decoder.Decode(&s)
+
+	return nil
+}
+
+// Save keys to file.
+func (s *KVStore[K, V]) Save(file string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Remove file if already exists.
+	err := os.Remove(file)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	// Create file if not exists.
+	saveTo, err := os.Create(file)
+	if err != nil {
+		return fmt.Errorf("cannot create file %v with error %v", file, err)
+	}
+	defer saveTo.Close()
+	// Create new encoder and encode.
+	encoder := gob.NewEncoder(saveTo)
+	err = encoder.Encode(&s)
+	if err != nil {
+		return fmt.Errorf("cannot save to file %v with error %v", file, err)
+	}
+
+	return nil
 }
