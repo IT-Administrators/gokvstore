@@ -98,6 +98,16 @@ func (s *KVStore[K, V]) Delete(key K) (V, error) {
 	return value, nil
 }
 
+// Removes all keys from store.
+func (s *KVStore[K, V]) Clear() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for key, _ := range s.data {
+		delete(s.data, key)
+	}
+}
+
 // Print the current store.
 func (s *KVStore[K, V]) Print() {
 	for k, d := range s.data {
