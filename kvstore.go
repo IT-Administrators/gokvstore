@@ -23,19 +23,19 @@ type Storer[K comparable, V any] interface {
 // Key value store.
 type KVStore[K comparable, V any] struct {
 	mu   sync.RWMutex
-	data map[K]V
+	Data map[K]V
 }
 
 // Create key value store.
 func NewKVStore[K comparable, V any]() *KVStore[K, V] {
 	return &KVStore[K, V]{
-		data: make(map[K]V),
+		Data: make(map[K]V),
 	}
 }
 
 // Check if key is present in store.
 func (s *KVStore[K, V]) hasKey(key K) bool {
-	_, ok := s.data[key]
+	_, ok := s.Data[key]
 	return ok
 }
 
@@ -46,7 +46,7 @@ func (s *KVStore[K, V]) Put(key K, value V) error {
 	// Unlock store.
 	defer s.mu.Unlock()
 	// Insert into store.
-	s.data[key] = value
+	s.Data[key] = value
 	return nil
 }
 
@@ -57,7 +57,7 @@ func (s *KVStore[K, V]) Get(key K) (V, error) {
 	defer s.mu.RUnlock()
 
 	// Check if key is in store.
-	value, exists := s.data[key]
+	value, exists := s.Data[key]
 	if !exists {
 		return value, fmt.Errorf("the key (%v) does not exist", key)
 	}
@@ -77,7 +77,7 @@ func (s *KVStore[K, V]) Update(key K, value V) error {
 		return fmt.Errorf("the key (%v) does not exist", key)
 	}
 	// Insert into store if not exists.
-	s.data[key] = value
+	s.Data[key] = value
 	return nil
 }
 
@@ -87,11 +87,11 @@ func (s *KVStore[K, V]) Delete(key K) (V, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	value, exists := s.data[key]
+	value, exists := s.Data[key]
 	if !exists {
 		return value, fmt.Errorf("the key (%v) does not exist", key)
 	}
-	delete(s.data, key)
+	delete(s.Data, key)
 	// Show old value.
 	return value, nil
 }
@@ -101,14 +101,14 @@ func (s *KVStore[K, V]) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for key, _ := range s.data {
-		delete(s.data, key)
+	for key, _ := range s.Data {
+		delete(s.Data, key)
 	}
 }
 
 // Print the current store.
 func (s *KVStore[K, V]) Print() {
-	for k, d := range s.data {
+	for k, d := range s.Data {
 		fmt.Printf("key: %v value: %v\n", k, d)
 	}
 }
