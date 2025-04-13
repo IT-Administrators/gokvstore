@@ -9,6 +9,8 @@ import (
 
 // This storer interface represents the methods to manage the key value store.
 // Generic interface to use with any datatype.
+//
+// Use [K int64 | float64 | string, V any] to restrict keys to types int, float and string.
 type Storer[K comparable, V any] interface {
 	// Insert to storage.
 	Put(K, V) error
@@ -101,7 +103,7 @@ func (s *KVStore[K, V]) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for key, _ := range s.Data {
+	for key := range s.Data {
 		delete(s.Data, key)
 	}
 }
