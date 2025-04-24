@@ -1,6 +1,7 @@
 package gokvstore
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -58,5 +59,32 @@ func Test_Clear(t *testing.T) {
 	kvs.Clear()
 	if ok := kvs.Data[testKey1]; ok != nil {
 		t.Errorf("removal not succesffull; value: %v", kvs.Data[testKey1])
+	}
+}
+
+// Test Put function concurrently.
+func Test_PutRoutine(t *testing.T) {
+	var count = 1000000
+	// Create second kvstore.
+	kvs2 := NewKVStore[int, int]()
+	// Create watigroup to save go routines.
+	var wg sync.WaitGroup
+
+	for i := 0; i < count; i++ {
+		// Add go routine.
+		wg.Add(1)
+		go func() {
+			// End go routine.
+			defer wg.Done()
+			kvs2.Put(i, i)
+		}()
+	}
+	// Wait for go routines to finish.
+	wg.Wait()
+	// Check if all keys are present.
+	for i := 0; i < count; i++ {
+		if _, err := kvs2.Get(i); err != nil {
+			t.Errorf("expected %v got %v", i, err)
+		}
 	}
 }
