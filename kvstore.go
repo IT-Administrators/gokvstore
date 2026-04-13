@@ -3,6 +3,7 @@ package gokvstore
 import (
 	"encoding/gob"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"sync"
 )
@@ -22,96 +23,117 @@ type Storer[K comparable, V any] interface {
 	Delete(K) (V, error)
 }
 
+/* Each store is split into smaller maps. And each key is assigned to exactly one map based on its hash.
+// Sharding spreads keys across multiple independent maps so:
+// - Different keys often hit different shards
+// - Operations on different shards dont intefere with each other
+// - Better througput with concurrency
+// */
+
+// Number of shards. Power of two makes masking easy.
+const defaultShards = 32
+
+type shard[V any] struct {
+	data sync.Map // map[any]V via interface{}, keep types consistent at the API
+}
+
 // Key value store.
 type KVStore[K comparable, V any] struct {
-	mu   sync.RWMutex
-	Data map[K]V
+	shards []shard[V]
+	mask   uint64
 }
 
-// Create key value store.
+// NewKVStore creates a sharded sync.Map-based KV store.
 func NewKVStore[K comparable, V any]() *KVStore[K, V] {
-	return &KVStore[K, V]{
-		Data: make(map[K]V),
+	s := &KVStore[K, V]{
+		shards: make([]shard[V], defaultShards),
+		mask:   uint64(defaultShards - 1),
 	}
+	return s
 }
 
-// Check if key is present in store.
-func (s *KVStore[K, V]) hasKey(key K) bool {
-	_, ok := s.Data[key]
-	return ok
+// Produce a uint64 hash from the keys string representation.
+func hashKey[K comparable](key K) uint64 {
+	// Create a new hash function.
+	h := fnv.New64a()
+	// Convert key into string and wirte to hash function.
+	fmt.Fprintf(h, "%v", key) // simple, generic; can be optimized for specific K
+	return h.Sum64()
+}
+
+/* mask = 32 -1 = 31 = 0b11111
+h & 0b11111 extracts lowest number of bits of the hash (number between 0 - 31)
+The number is the shard index.
+Only works because shards is a power of two.*/
+
+// Get associated shard for key.
+func (s *KVStore[K, V]) getShard(key K) *shard[V] {
+	// Get hash from previous function.
+	h := hashKey(key)
+	// Return pointer to selected shard.
+	return &s.shards[h&s.mask]
 }
 
 // Insert key to store.
 func (s *KVStore[K, V]) Put(key K, value V) error {
-	// This is a write method. It needs a write mutex to prevent changes while inserting values.
-	s.mu.Lock()
-	// Unlock store.
-	defer s.mu.Unlock()
-	// Insert into store.
-	s.Data[key] = value
+	// Find the shard. Than only operate on that shard.
+	sh := s.getShard(key)
+	sh.data.Store(key, value)
 	return nil
 }
 
-// Retrieve value for specified key.
 func (s *KVStore[K, V]) Get(key K) (V, error) {
-	// This is read method so it needs a read mutex to prevent chagnes while reading.
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Check if key is in store.
-	value, exists := s.Data[key]
-	if !exists {
-		return value, fmt.Errorf("the key (%v) does not exist", key)
+	sh := s.getShard(key)
+	val, ok := sh.data.Load(key)
+	if !ok {
+		var zero V
+		return zero, fmt.Errorf("key %v not found", key)
 	}
-	return value, nil
+	return val.(V), nil
 }
 
 // Update specified key with specified value.
 func (s *KVStore[K, V]) Update(key K, value V) error {
-	// This is a write method. It needs a write mutex to prevent changes while inserting values.
-	// Lock store for writing.
-	s.mu.Lock()
-	// Unlock store.
-	defer s.mu.Unlock()
-
-	// Check if key exists.
-	if !s.hasKey(key) {
-		return fmt.Errorf("the key (%v) does not exist", key)
+	sh := s.getShard(key)
+	_, ok := sh.data.Load(key)
+	if !ok {
+		return fmt.Errorf("key %v not found", key)
 	}
-	// Insert into store if not exists.
-	s.Data[key] = value
+	sh.data.Store(key, value)
 	return nil
 }
 
-// Delete specified key. This will remove key value pair from store.
 func (s *KVStore[K, V]) Delete(key K) (V, error) {
-	// This is a read method so it needs a read mutex to prevent changes while reading.
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	value, exists := s.Data[key]
-	if !exists {
-		return value, fmt.Errorf("the key (%v) does not exist", key)
+	sh := s.getShard(key)
+	val, ok := sh.data.LoadAndDelete(key)
+	if !ok {
+		var zero V
+		return zero, fmt.Errorf("key %v not found", key)
 	}
-	delete(s.Data, key)
-	// Show old value.
-	return value, nil
+	return val.(V), nil
 }
 
 // Removes all keys from store.
+// Clear removes all keys from all shards.
 func (s *KVStore[K, V]) Clear() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for key := range s.Data {
-		delete(s.Data, key)
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.data.Range(func(k, _ any) bool {
+			sh.data.Delete(k)
+			return true
+		})
 	}
 }
 
 // Print the current store.
+// Print is mainly for debugging.
 func (s *KVStore[K, V]) Print() {
-	for k, d := range s.Data {
-		fmt.Printf("key: %v value: %v\n", k, d)
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.data.Range(func(k, v any) bool {
+			fmt.Printf("key: %v value: %v\n", k, v)
+			return true
+		})
 	}
 }
 
@@ -119,50 +141,51 @@ func (s *KVStore[K, V]) Print() {
 //
 // This will overwrite all keys with the ones from file.
 // If they were deleted before, they will be recreated.
+// Load replaces current contents with those from file.
 func (s *KVStore[K, V]) Load(file string) error {
-
-	// Apply lock to stop writing while importin.
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Open file.
-	loadFrom, err := os.Open(file)
-
+	f, err := os.Open(file)
 	if err != nil {
-		return fmt.Errorf("empty key/value store!, Error: %v", err)
+		return fmt.Errorf("cannot open file %v: %w", file, err)
 	}
-	defer loadFrom.Close()
+	defer f.Close()
 
-	// Create new decoder and decode.
-	decoder := gob.NewDecoder(loadFrom)
-	decoder.Decode(&s)
+	tmp := make(map[K]V)
+	dec := gob.NewDecoder(f)
+	if err := dec.Decode(&tmp); err != nil {
+		return fmt.Errorf("cannot decode data from %v: %w", file, err)
+	}
 
+	// Clear and repopulate shards.
+	s.Clear()
+	for k, v := range tmp {
+		_ = s.Put(k, v)
+	}
 	return nil
 }
 
 // Save keys to file.
+// Save serializes all shards into a single map[K]V and writes it to file.
 func (s *KVStore[K, V]) Save(file string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Collect into a plain map for gob.
+	tmp := make(map[K]V)
 
-	// Remove file if already exists.
-	err := os.Remove(file)
-	if err != nil {
-		fmt.Println(err)
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.data.Range(func(k, v any) bool {
+			tmp[k.(K)] = v.(V)
+			return true
+		})
 	}
 
-	// Create file if not exists.
-	saveTo, err := os.Create(file)
+	f, err := os.Create(file)
 	if err != nil {
-		return fmt.Errorf("cannot create file %v with error %v", file, err)
+		return fmt.Errorf("cannot create file %v: %w", file, err)
 	}
-	defer saveTo.Close()
-	// Create new encoder and encode.
-	encoder := gob.NewEncoder(saveTo)
-	err = encoder.Encode(&s)
-	if err != nil {
-		return fmt.Errorf("cannot save to file %v with error %v", file, err)
-	}
+	defer f.Close()
 
+	enc := gob.NewEncoder(f)
+	if err := enc.Encode(tmp); err != nil {
+		return fmt.Errorf("cannot encode data to %v: %w", file, err)
+	}
 	return nil
 }
