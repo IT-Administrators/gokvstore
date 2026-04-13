@@ -1,21 +1,34 @@
+<!-- toc:insertAfterHeading=gokvstore -->
+<!-- toc:insertAfterHeadingOffset=3 -->
+
 # gokvstore
 
 A go library which implements a key value store.
 
-## Table of contents
+## Table of Contents
 
 1. [Introduction](#introduction)
 1. [Getting started](#getting-started)
     1. [Prerequisites](#prerequisites)
     1. [Installation](#installation)
 1. [How to use](#how-to-use)
-1. [License](/LICENSE)
+1. [License](#license)
 
 ## Introduction
 
 I created this library to learn how generics work in golang. 
 
-This library might be extended in the future. Currently it uses no concurrency for kvstore manipulation. 
+This library might be extended in the future. 
+
+The kvstore is implemented using shards, which basically means the store is split internally into a number of independent maps which handle the keys.
+ 
+This enables the following features:
+- Massively reduced contention
+- Higher throughput
+- Better CPU utilization
+- Predictable performance under load
+
+Currently the shard count is not configurable, there is no dynamic re-sharding.
 
 ## Getting started
 
